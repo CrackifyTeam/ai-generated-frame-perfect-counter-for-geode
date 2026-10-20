@@ -6,11 +6,17 @@
 		"mac": "2.2081",
 		"ios": "2.2081"
 	},
-	"id": "$MOD_ID",
-	"name": "$MOD_NAME",
-	"version": "$MOD_VERSION",
-	"developer": "$MOD_DEVELOPER",
-	"description": "$MOD_DESCRIPTION",
+	"id": "frame_perfect_counter_from_temu",
+	"name": "temu_frame_perfect_counter",
+	"version": "1.0",
+	"developer": "MsutGDxClaude",
+	"description": "temu frame perfect counter 100% ai generated",
+		"settings": {
+		"reset-on-death": {
+			"type": "bool",
+			"name": "Bei Tod zurücksetzen",
+			"description": "Setzt die Zähler bei jedem neuen Versuch zurück.",
+			"default": true
 	"dependencies": {
 		"geode.node-ids": ">=v1.23.3"
 	}
