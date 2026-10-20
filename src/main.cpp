@@ -1,100 +1,101 @@
-/**
- * Include the Geode headers.
- */
 #include <Geode/Geode.hpp>
+#include <Geode/modify/PlayLayer.hpp>
+#include <Geode/modify/GJBaseGameLayer.hpp>
 
-/**
- * Brings cocos2d and all Geode namespaces to the current scope.
- */
 using namespace geode::prelude;
 
-/**
- * `$modify` lets you extend and modify GD's classes.
- * To hook a function in Geode, simply $modify the class
- * and write a new function definition with the signature of
- * the function you want to hook.
- *
- * Here we use the overloaded `$modify` macro to set our own class name,
- * so that we can use it for button callbacks.
- *
- * Notice the header being included, you *must* include the header for
- * the class you are modifying, or you will get a compile error.
- *
- * Another way you could do this is like this:
- *
- * struct MyMenuLayer : Modify<MyMenuLayer, MenuLayer> {};
- */
-#include <Geode/modify/MenuLayer.hpp>
-class $modify(MyMenuLayer, MenuLayer) {
-	/**
-	 * Typically classes in GD are initialized using the `init` function, (though not always!),
-	 * so here we use it to add our own button to the bottom menu.
-	 *
-	 * Note that for all hooks, your signature has to *match exactly*,
-	 * `void init()` would not place a hook!
-	*/
-	bool init() {
-		/**
-		 * We call the original init function so that the
-		 * original class is properly initialized.
-		 */
-		if (!MenuLayer::init()) {
-			return false;
-		}
+namespace {
+    constexpr int FPS_LIST[] = {30, 60, 120, 240, 360};
+    constexpr int FPS_COUNT = 5;
+    // Toleranz in Sekunden beim Vergleich (360 vs 240 FPS liegen ~0.0014 s auseinander)
+    constexpr double TOLERANCE = 0.0004;
 
-		/**
-		 * You can use methods from the `geode::log` namespace to log messages to the console,
-		 * being useful for debugging and such. See this page for more info about logging:
-		 * https://docs.geode-sdk.org/tutorials/logging
-		*/
-		log::debug("Hello from my MenuLayer::init hook! This layer has {} children.", this->getChildrenCount());
+    int g_counts[FPS_COUNT] = {0, 0, 0, 0, 0};
+    double g_lastTime[2] = {-1.0, -1.0}; // pro Spieler (P1 = 0, P2 = 1)
+    int g_lastDown[2] = {-1, -1};
 
-		/**
-		 * See this page for more info about buttons
-		 * https://docs.geode-sdk.org/tutorials/buttons
-		*/
-		auto myButton = CCMenuItemSpriteExtra::create(
-			CCSprite::createWithSpriteFrameName("GJ_likeBtn_001.png"),
-			this,
-			/**
-			 * Here we use the name we set earlier for our modify class.
-			*/
-			menu_selector(MyMenuLayer::onMyButton)
-		);
+    void clearLastInputs() {
+        for (int p = 0; p < 2; p++) {
+            g_lastTime[p] = -1.0;
+            g_lastDown[p] = -1;
+        }
+    }
 
-		/**
-		 * Here we access the `bottom-menu` node by its ID, and add our button to it.
-		 * Node IDs are a Geode feature, see this page for more info about it:
-		 * https://docs.geode-sdk.org/tutorials/nodetree
-		*/
-		auto menu = this->getChildByID("bottom-menu");
-		menu->addChild(myButton);
+    void resetCounts() {
+        for (int i = 0; i < FPS_COUNT; i++) g_counts[i] = 0;
+        clearLastInputs();
+    }
 
-		/**
-		 * The `_spr` string literal operator just prefixes the string with
-		 * your mod id followed by a slash. This is good practice for setting your own node ids.
-		*/
-		myButton->setID("my-button"_spr);
+    void updateLabel(PlayLayer* pl) {
+        if (!pl || !pl->m_uiLayer) return;
+        auto label = static_cast<CCLabelBMFont*>(pl->m_uiLayer->getChildByID("fp-counter"_spr));
+        if (!label) return;
 
-		/**
-		 * We update the layout of the menu to ensure that our button is properly placed.
-		 * This is yet another Geode feature, see this page for more info about it:
-		 * https://docs.geode-sdk.org/tutorials/layouts
-		*/
-		menu->updateLayout();
+        std::string text;
+        for (int i = 0; i < FPS_COUNT; i++) {
+            text += fmt::format("{}fps: {}", FPS_LIST[i], g_counts[i]);
+            if (i + 1 < FPS_COUNT) text += "\n";
+        }
+        label->setString(text.c_str());
+    }
+}
 
-		/**
-		 * We return `true` to indicate that the class was properly initialized.
-		 */
-		return true;
-	}
+class $modify(FPPlayLayer, PlayLayer) {
+    void setupHasCompleted() {
+        PlayLayer::setupHasCompleted();
+        resetCounts();
 
-	/**
-	 * This is the callback function for the button we created earlier.
-	 * The signature for button callbacks must always be the same,
-	 * return type `void` and taking a `CCObject*`.
-	*/
-	void onMyButton(CCObject*) {
-		FLAlertLayer::create("Geode", "Hello from my custom mod!", "OK")->show();
-	}
+        auto label = CCLabelBMFont::create("", "bigFont.fnt");
+        label->setID("fp-counter"_spr);
+        label->setAnchorPoint({0.f, 1.f});
+        label->setScale(0.4f);
+        label->setOpacity(190);
+        auto winSize = CCDirector::get()->getWinSize();
+        label->setPosition({5.f, winSize.height - 5.f});
+        m_uiLayer->addChild(label, 100);
+
+        updateLabel(this);
+    }
+
+    void resetLevel() {
+        PlayLayer::resetLevel();
+        if (Mod::get()->getSettingValue<bool>("reset-on-death")) {
+            resetCounts();
+        } else {
+            clearLastInputs();
+        }
+        updateLabel(this);
+    }
+};
+
+class $modify(FPBaseGameLayer, GJBaseGameLayer) {
+    void handleButton(bool down, int button, bool isPlayer1) {
+        GJBaseGameLayer::handleButton(down, button, isPlayer1);
+
+        // Nur im Level spielen, nicht im Editor, und nur der Jump-Button
+        auto pl = PlayLayer::get();
+        if (!pl || static_cast<GJBaseGameLayer*>(pl) != this) return;
+        if (button != 1) return;
+
+        int p = isPlayer1 ? 0 : 1;
+        int d = down ? 1 : 0;
+        if (g_lastDown[p] == d) return; // doppelte Events ignorieren
+
+        double now = m_gameState.m_levelTime;
+
+        if (g_lastTime[p] >= 0.0) {
+            double dt = now - g_lastTime[p];
+            // Genau 1 Frame Abstand (Halten oder Pause) bei diesem FPS-Wert?
+            for (int i = 0; i < FPS_COUNT; i++) {
+                if (std::abs(dt - 1.0 / FPS_LIST[i]) <= TOLERANCE) {
+                    g_counts[i]++;
+                    break;
+                }
+            }
+        }
+
+        g_lastTime[p] = now;
+        g_lastDown[p] = d;
+        updateLabel(pl);
+    }
 };
